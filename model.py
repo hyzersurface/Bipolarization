@@ -4,33 +4,41 @@ from utils import *
 
 class ParamEstimator:
     def __init__(self,Bas,Vars,bases):
-        stds = np.sqrt(Vars)
-        self.Bas = torch.tensor(Bas)
-        self.Sig = torch.tensor(stds)
-        self.bas = torch.tensor(Bas,requires_grad=True)
-        self.sig = torch.tensor(stds,requires_grad=True)
-        self.bases = bases
-        degree = len(bases)
-        self.T = len(self.Bas)
-        self.A = torch.tensor([.5,.8],requires_grad=True) # ANa
-        # cross party, within party
-        self.B_T = torch.tensor([0.1,],requires_grad=True)
-        self.B_H = torch.tensor([.5],requires_grad=True)
-        self.alphas = torch.zeros(degree)
-        self.alphas[:5] = torch.tensor([.5,0.3,0.2,0.,0.,])
-        self.alphas.requires_grad=True
+        ### Initialize the estimator with proper values
+        # ------------------------------------------------- #
+        # Bas: true mu values
+        # Vars: true sigma values
+        # bases: bases for the function of alpha
 
+        stds = np.sqrt(Vars)
+        self.Bas = torch.tensor(Bas)                        # true mu
+        self.Sig = torch.tensor(stds)                       # true sigma
+        self.bas = torch.tensor(Bas,requires_grad=True)     # estimated mu
+        self.sig = torch.tensor(stds,requires_grad=True)    # estimated sigma
+        self.bases = bases
+        self.T = len(self.Bas)
+
+        # Initialize each parameters in the model
+        self.A = torch.tensor([.5,.8],requires_grad=True) # A*Na*Dt
+        self.B_T = torch.tensor([0.1,],requires_grad=True) # B_T
+        self.B_H = torch.tensor([.5],requires_grad=True)   # B_H
+        self.alphas = torch.zeros(len(bases))
+        self.alphas[:5] = torch.tensor([.5,0.3,0.2,0.,0.,])  # Initialize alpha
+        self.alphas.requires_grad = True
+
+        # Four coefficients corresponding to four loss terms
         self.cd1 = calculate_var(self.Bas)
         self.cd2 = calculate_var(self.Sig)
         self.ce1 = calculate_var(abs(self.Bas[1:]-self.Bas[:-1]))
         self.ce2 = calculate_var(abs(self.Sig[1:]-self.Sig[:-1]))
 
     def return_A(self,t):
+        # return A for given time points t
         # A = A0 * exp(c*t/T)
         return self.A[0] * torch.exp((t/self.T) * self.A[1])
 
     def return_alpha(self,t):
-        # alpha = a0/2 + a1*cos(pi*x) + b1*sin(pi*x) + ... + an*cos(n*pi*x) + bn*sin(n*pi*x) + ...
+        # return alpha for given time points t
         alpha = torch.ones_like(t)*self.alphas[0]
         for i in range(1,len(self.alphas)):
             f = self.bases[i]
@@ -39,11 +47,11 @@ class ParamEstimator:
     
     def L_d1(self):
         return (self.bas-self.Bas).square().mean()/self.cd1
+    
     def L_d2(self):
-        return ((self.Sig-self.sig)).square().mean()/self.cd2
+        return (self.Sig-self.sig).square().mean()/self.cd2
     
     def L_e1(self):
-        ## dba/dt = -2 A * Na * B_a * (1+2B_a/B_T) * exp(-(2B_a/B_H)**2) - alpha * B_a
         ts = torch.arange(0,self.T-1)
         alpha = self.return_alpha(ts)
         bt = self.B_T[0]
@@ -55,25 +63,15 @@ class ParamEstimator:
         return (dba-dba1).square().mean()/self.ce1
     
     def L_e2(self):
-        ## dvar / dt = 2 * var / (sqrt(pi) * bt) * (4 * A * Na * sigma - sqrt(pi) * bt * (A*Na + alpha + beta))
-        ## dvar /dt = 2 * var * (-A*Na + 4A*Na*sigma/spi/bt + 6*var/bh**2 - 32*sigma**3/spi/bt/bh**2 - alpha - beta)
         spi = np.sqrt(np.pi)
         ts = torch.arange(0,self.T-1)
         alpha = self.return_alpha(ts)
         a = self.return_A(ts)
         bt = self.B_T[0]
-        vars = self.sig[:-1]
+        sig = self.sig[:-1]
         dvdt = (self.sig[1:]-self.sig[:-1])
-        dvdt1 = vars * (-a + 4*a*vars/spi/bt - alpha) 
-        return ((dvdt-dvdt1)).square().mean()/self.ce2
-    
-    def clip_params(self):
-        with torch.no_grad():
-            torch.clip_(self.A,0,100)
-            torch.clip_(self.B_T,0.01,2)
-            torch.clip_(self.B_H,0.1,10)
-            torch.clip_(self.bas,0.1,0.6)
-            torch.clip_(self.sig,0.01,0.3)
+        dvdt1 = sig * (-a + 4*a*sig/spi/bt - alpha) 
+        return (dvdt-dvdt1).square().mean()/self.ce2
 
     def train_epoch(self,optimizer,lam1,lam2,lam3,lam4):
         optimizer.zero_grad()
@@ -84,7 +82,6 @@ class ParamEstimator:
         loss = lam1*ld1 + lam2*ld2 + lam3*le1 + lam4*le2 
         loss.backward()
         optimizer.step()
-        self.clip_params()
         return ld1.item(), ld2.item(), le1.item(), le2.item()
     
     def train(self,epochs,lr,lam1,lam2,lam3,lam4):
