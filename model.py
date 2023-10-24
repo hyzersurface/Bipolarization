@@ -27,10 +27,10 @@ class ParamEstimator:
         self.alphas.requires_grad = True
 
         # Four coefficients corresponding to four loss terms
-        self.cd1 = calculate_var(self.Bas)
-        self.cd2 = calculate_var(self.Sig)
-        self.ce1 = calculate_var(abs(self.Bas[1:]-self.Bas[:-1]))
-        self.ce2 = calculate_var(abs(self.Sig[1:]-self.Sig[:-1]))
+        self.cd1 = self.Bas.var()
+        self.cd2 = self.Sig.var()
+        self.ce1 = abs(self.Bas[1:]-self.Bas[:-1]).var()
+        self.ce2 = abs(self.Sig[1:]-self.Sig[:-1]).var()
 
     def return_A(self,t):
         # return A for given time points t
@@ -52,7 +52,7 @@ class ParamEstimator:
         return (self.Sig-self.sig).square().mean()/self.cd2
     
     def L_e1(self):
-        ts = torch.arange(0,self.T-1)
+        ts = torch.arange(1,self.T)
         alpha = self.return_alpha(ts)
         bt = self.B_T[0]
         bh = self.B_H[0]
@@ -64,7 +64,7 @@ class ParamEstimator:
     
     def L_e2(self):
         spi = np.sqrt(np.pi)
-        ts = torch.arange(0,self.T-1)
+        ts = torch.arange(1,self.T)
         alpha = self.return_alpha(ts)
         a = self.return_A(ts)
         bt = self.B_T[0]
